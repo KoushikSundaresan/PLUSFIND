@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -7,8 +6,7 @@ import EVSelector from '@/components/EVSelector';
 import RoutePlanner from '@/components/RoutePlanner';
 import RouteResults from '@/components/RouteResults';
 import ApiKeyConfig from '@/components/ApiKeyConfig';
-import { EVModel, ChargingStation, SimplifiedRoutePlan } from '@/types/ev';
-import { mockChargingStations } from '@/data/chargingStations';
+import { EVModel, ChargingStation, RoutePlan } from '@/types/ev';
 import { useToast } from '@/hooks/use-toast';
 import { Zap, MapPin } from 'lucide-react';
 
@@ -16,40 +14,46 @@ const Index = () => {
   const { toast } = useToast();
   const [selectedModel, setSelectedModel] = useState<EVModel | undefined>();
   const [selectedStation, setSelectedStation] = useState<ChargingStation | undefined>();
-  const [routePlan, setRoutePlan] = useState<SimplifiedRoutePlan | null>(null);
+  const [routePlan, setRoutePlan] = useState<RoutePlan | null>(null);
 
   const handleStationSelect = (station: ChargingStation) => {
     setSelectedStation(station);
   };
 
-  const handlePlanRoute = (plan: SimplifiedRoutePlan) => {
+  const handlePlanRoute = (plan: RoutePlan) => {
     setRoutePlan(plan);
+    
+    // Show success toast with route summary
+    toast({
+      title: "Route Calculated! 🗺️",
+      description: `${plan.totalDistance}km trip with ${plan.chargingStops.length} charging stop${plan.chargingStops.length !== 1 ? 's' : ''}`,
+      duration: 5000,
+    });
   };
 
   const handleStartNavigation = () => {
     if (!routePlan) return;
     
     try {
-      // Create Google Maps URL with waypoints for charging stops
+      // Create Google Maps URL with optimized waypoints
       const origin = `${routePlan.origin.lat},${routePlan.origin.lng}`;
       const destination = `${routePlan.destination.lat},${routePlan.destination.lng}`;
-      
-      // Find optimal charging stops based on route and vehicle needs
-      const optimalChargingStops = findOptimalChargingStops(routePlan);
       
       let mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(routePlan.origin.address)}&destination=${encodeURIComponent(routePlan.destination.address)}&travelmode=driving`;
       
       // Add charging stops as waypoints
-      if (optimalChargingStops.length > 0) {
-        const waypoints = optimalChargingStops.map(stop => `${stop.lat},${stop.lng}`).join('|');
+      if (routePlan.chargingStops.length > 0) {
+        const waypoints = routePlan.chargingStops
+          .map(stop => `${stop.station.lat},${stop.station.lng}`)
+          .join('|');
         mapsUrl += `&waypoints=${waypoints}`;
       }
       
-      // Show success toast
+      // Show detailed navigation toast
       toast({
-        title: "Navigation Started! 🗺️",
-        description: `Opening Google Maps with ${optimalChargingStops.length} charging stop${optimalChargingStops.length !== 1 ? 's' : ''}`,
-        duration: 3000,
+        title: "Navigation Started! 🚗",
+        description: `Opening Google Maps with ${routePlan.chargingStops.length} optimized charging stop${routePlan.chargingStops.length !== 1 ? 's' : ''}. Total time: ${Math.floor(routePlan.totalDuration / 60)}h ${routePlan.totalDuration % 60}m`,
+        duration: 5000,
       });
       
       // Open Google Maps in a new tab
@@ -64,39 +68,6 @@ const Index = () => {
         duration: 3000,
       });
     }
-  };
-  
-  // Helper function to find optimal charging stops
-  const findOptimalChargingStops = (plan: SimplifiedRoutePlan): ChargingStation[] => {
-    const stops: ChargingStation[] = [];
-    
-    // If route requires charging stops, find the best available stations
-    if (plan.chargingStops > 0) {
-      // Filter available stations that are compatible with the vehicle
-      const compatibleStations = mockChargingStations.filter(station => {
-        const isAvailable = station.isAvailable;
-        const hasCompatibleConnector = station.connectorTypes.some(type => 
-          plan.vehicle.chargingPorts.some(port => port.type === type)
-        );
-        return isAvailable && hasCompatibleConnector;
-      });
-      
-      // For demo: select up to 2 best stations (highest power, preferably DEWA/Tesla)
-      const bestStations = compatibleStations
-        .sort((a, b) => {
-          // Prioritize Tesla Superchargers and DEWA stations
-          const aPriority = (a.network === 'Tesla' || a.network === 'DEWA') ? 1 : 0;
-          const bPriority = (b.network === 'Tesla' || b.network === 'DEWA') ? 1 : 0;
-          if (aPriority !== bPriority) return bPriority - aPriority;
-          // Then by max power
-          return b.maxPower - a.maxPower;
-        })
-        .slice(0, Math.min(plan.chargingStops, 2));
-      
-      stops.push(...bestStations);
-    }
-    
-    return stops;
   };
 
   return (
@@ -118,10 +89,10 @@ const Index = () => {
             </div>
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="bg-green-500/10 text-green-700 border-green-500/20">
-                100% Free APIs
+                Real Data
               </Badge>
               <Badge variant="outline" className="bg-blue-500/10 text-blue-700 border-blue-500/20">
-                Beta
+                Dynamic Routing
               </Badge>
             </div>
           </div>
@@ -197,6 +168,25 @@ const Index = () => {
                   </div>
                 </div>
 
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-white/50">Connectors</p>
+                    <div className="flex flex-wrap gap-1">
+                      {selectedStation.connectorTypes.slice(0, 2).map((type, index) => (
+                        <Badge key={index} variant="secondary" className="text-xs">
+                          {type}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-white/50">Cost</p>
+                    <p className="text-white font-medium">
+                      {selectedStation.costPerKwh ? `${selectedStation.costPerKwh} AED/kWh` : 'N/A'}
+                    </p>
+                  </div>
+                </div>
+
                 {selectedStation.amenities.length > 0 && (
                   <div>
                     <p className="text-white/50 text-sm mb-1">Amenities</p>
@@ -206,6 +196,9 @@ const Index = () => {
                           {amenity}
                         </Badge>
                       ))}
+                      {selectedStation.amenities.length > 3 && (
+                        <span className="text-white/50 text-xs">+{selectedStation.amenities.length - 3} more</span>
+                      )}
                     </div>
                   </div>
                 )}
